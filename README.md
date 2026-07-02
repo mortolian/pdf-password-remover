@@ -78,37 +78,40 @@ pdf-unlock --in-place ~/Documents/invoices
 pdf-unlock -n -r ~/Documents/invoices
 ```
 
-### Enable the Quick Action (macOS 26 Tahoe)
+### Use in Finder
 
-Apple moved this setting. Try these in order:
+After `./install.sh`, one Finder service is installed: **Unlock PDF**
 
-1. **System Settings → General → Login Items & Extensions**
-   - Scroll to **Extensions**
-   - Click the **ⓘ** (info) button next to **Finder**
-   - Turn on **Unlock PDFs**
+| Right-click on | Menu item |
+|----------------|-----------|
+| A **PDF file** or **folder** | **Unlock PDF** |
 
-2. **System Settings → Privacy & Security**
-   - Scroll to the bottom → **Extensions** (under *Others*)
-   - Click **Finder**
-   - Turn on **Unlock PDFs**
+Look under **Services** (hold **⌥ Option** while right-clicking if needed).
 
-3. Use **search** at the top of System Settings and type `Extensions` or `Unlock PDFs`.
+### If the menu item is missing (macOS 26 Tahoe)
 
-If **Unlock PDFs** does not appear in the list:
+**System Settings → Keyboard → Keyboard Shortcuts → Services → Files and Folders**
 
-```bash
-open ~/Library/Services/Unlock\ PDFs.workflow
-```
-
-In Automator: **File → Save** (no changes needed). Then check the Finder extensions list again and restart Finder:
+Turn on **Unlock PDF**, then restart Finder:
 
 ```bash
 killall Finder
 ```
 
-**Finder:** Select a folder → right-click → **Quick Actions** → **Unlock PDFs** → choose *This folder only* or *Include subfolders*.
+### If you see "not configured correctly" or it fails silently
 
-If it is not under Quick Actions, try **Services** → **Unlock PDFs** (same action, older menu name).
+Run these in Terminal:
+
+```bash
+pdf-password trust
+./install.sh
+```
+
+Then check the log after trying again in Finder:
+
+```bash
+tail -20 ~/Library/Logs/pdf-password-remover.log
+```
 
 ## Where passwords are stored
 

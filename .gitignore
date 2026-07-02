@@ -13,7 +13,8 @@
 credentials*
 secrets*
 
-# Test artifacts
+# Local account-name registry (not secrets)
+.config/pdf-password-remover/
 *.bak
 *-unlocked.pdf
 test-output/

@@ -1,52 +1,95 @@
 #!/usr/bin/env bash
-# Finder Quick Action entry point: prompt for recursive mode, then unlock PDFs.
+# Finder Quick Action entry point: unlock selected PDF file(s) or folder(s).
 
-set -euo pipefail
+set -uo pipefail
+
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:${PATH:-}"
+
+# shellcheck source=lib/keychain.sh
+source "${HOME}/.local/bin/lib/keychain.sh"
 
 PDF_UNLOCK="${PDF_UNLOCK:-$(command -v pdf-unlock 2>/dev/null || echo "${HOME}/.local/bin/pdf-unlock")}"
 
 if [[ ! -x "$PDF_UNLOCK" ]]; then
-  osascript -e 'display alert "PDF Password Remover" message "pdf-unlock not found. Run install.sh from the project folder." as critical'
-  exit 1
+  osascript -e 'display alert "PDF Password Remover" message "pdf-unlock not found. Run install.sh from the project folder." as critical' 2>/dev/null || true
+  exit 0
 fi
 
 choose_mode() {
-  osascript <<'APPLESCRIPT'
+  osascript <<'APPLESCRIPT' 2>/dev/null
 set response to button returned of (display dialog "How should PDFs in the selected folder(s) be processed?" with title "Unlock PDFs" buttons {"Cancel", "This folder only", "Include subfolders"} default button "This folder only" cancel button "Cancel")
 return response
 APPLESCRIPT
 }
 
+is_pdf() {
+  local path="$1"
+  [[ -f "$path" ]] || return 1
+  case "$(basename "$path")" in
+    *.pdf|*.PDF) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+run_unlock() {
+  local -a args=("$@")
+  local output
+  if ! output="$("$PDF_UNLOCK" -q "${args[@]}" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  [[ -n "$output" ]] && printf '%s\n' "$output"
+  return 0
+}
+
 main() {
   if [[ $# -eq 0 ]]; then
-    osascript -e 'display alert "Unlock PDFs" message "Select one or more folders in Finder, then run this action again."'
+    osascript -e 'display alert "Unlock PDFs" message "Select one or more PDF files or folders in Finder, then run this action again."' 2>/dev/null || true
     exit 0
   fi
 
-  local mode
-  mode="$(choose_mode)" || exit 0
-
-  local recursive=()
-  if [[ "$mode" == "Include subfolders" ]]; then
-    recursive=(--recursive)
-  fi
-
-  local folder errors=0
-  for folder in "$@"; do
-    if [[ ! -d "$folder" ]]; then
-      continue
-    fi
-    if ! "$PDF_UNLOCK" "${recursive[@]}" "$folder"; then
-      errors=$((errors + 1))
+  local files=() folders=() item
+  for item in "$@"; do
+    if is_pdf "$item"; then
+      files+=("$item")
+    elif [[ -d "$item" ]]; then
+      folders+=("$item")
     fi
   done
 
-  if [[ "$errors" -gt 0 ]]; then
-    osascript -e 'display alert "Unlock PDFs" message "Finished with some failures. Check Terminal for details."'
-    exit 1
+  if [[ ${#files[@]} -eq 0 && ${#folders[@]} -eq 0 ]]; then
+    osascript -e 'display alert "Unlock PDFs" message "Select PDF files or folders. This action does not run on other file types."' 2>/dev/null || true
+    exit 0
   fi
 
-  osascript -e 'display notification "PDF unlock finished." with title "Unlock PDFs"'
+  local errors=0
+
+  if [[ ${#files[@]} -gt 0 ]]; then
+    run_unlock "${files[@]}" || errors=$((errors + 1))
+  fi
+
+  if [[ ${#folders[@]} -gt 0 ]]; then
+    local mode recursive=()
+    mode="$(choose_mode)" || exit 0
+    if [[ "$mode" == "Include subfolders" ]]; then
+      recursive=(--recursive)
+    fi
+    for item in "${folders[@]}"; do
+      if [[ ${#recursive[@]} -gt 0 ]]; then
+        run_unlock "${recursive[@]}" "$item" || errors=$((errors + 1))
+      else
+        run_unlock "$item" || errors=$((errors + 1))
+      fi
+    done
+  fi
+
+  if [[ "$errors" -gt 0 ]]; then
+    osascript -e 'display alert "Unlock PDFs" message "Finished with some failures. Run pdf-password trust in Terminal, then check ~/Library/Logs/pdf-password-remover.log."' 2>/dev/null || true
+    exit 0
+  fi
+
+  osascript -e 'display notification "PDF unlock finished." with title "Unlock PDFs"' 2>/dev/null || true
+  exit 0
 }
 
 main "$@"

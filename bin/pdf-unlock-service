@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Finder service wrapper: collect Automator input and run pdf-unlock-finder.
+
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:${PATH:-}"
+
+LOG_DIR="${HOME}/Library/Logs"
+LOG_FILE="${LOG_DIR}/pdf-password-remover.log"
+FINDER_BIN="${HOME}/.local/bin/pdf-unlock-finder"
+
+mkdir -p "$LOG_DIR"
+
+{
+  echo "=== $(date) ==="
+  echo "args: $*"
+  echo "pwd: $(pwd)"
+  echo "user: $(whoami)"
+
+  items=()
+  if [[ $# -gt 0 ]]; then
+    items=("$@")
+  fi
+
+  if [[ -t 0 ]]; then
+    echo "stdin: tty (no pipe)"
+  else
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && items+=("$line")
+    done
+    echo "stdin lines read"
+  fi
+
+  if [[ ${#items[@]} -eq 0 ]]; then
+    echo "error: no input items"
+    exit 0
+  fi
+
+  echo "items: ${items[*]}"
+
+  if [[ ! -x "$FINDER_BIN" ]]; then
+    echo "error: missing ${FINDER_BIN}"
+    exit 0
+  fi
+
+  /bin/bash "$FINDER_BIN" "${items[@]}"
+  echo "exit: $?"
+} >>"$LOG_FILE" 2>&1
+
+exit 0

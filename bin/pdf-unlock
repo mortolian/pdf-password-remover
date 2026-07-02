@@ -4,14 +4,16 @@
 
 set -euo pipefail
 
-readonly KEYCHAIN_SERVICE="pdf-password-remover"
+# shellcheck source=lib/keychain.sh
+source "${HOME}/.local/bin/lib/keychain.sh"
+
 readonly SCRIPT_NAME="$(basename "$0")"
 
 usage() {
   cat <<EOF
-Usage: ${SCRIPT_NAME} [options] <folder>
+Usage: ${SCRIPT_NAME} [options] <path> [<path>...]
 
-Remove password protection from PDF files in a folder.
+Remove password protection from PDF files. Each path can be a folder or a single .pdf file.
 
 Options:
   -r, --recursive     Process subfolders recursively
@@ -27,6 +29,7 @@ Add passwords with: pdf-password add
 Examples:
   ${SCRIPT_NAME} ~/Documents/invoices
   ${SCRIPT_NAME} -r ~/Documents/invoices
+  ${SCRIPT_NAME} ~/Downloads/locked.pdf
   ${SCRIPT_NAME} --in-place ~/Downloads
 EOF
 }
@@ -46,24 +49,6 @@ require_qpdf() {
     log_err "       Or re-run the project install script: ./install.sh"
     exit 1
   fi
-}
-
-keychain_accounts() {
-  local keychain="${HOME}/Library/Keychains/login.keychain-db"
-  if [[ ! -f "$keychain" ]]; then
-    keychain="${HOME}/Library/Keychains/login.keychain"
-  fi
-  if [[ ! -f "$keychain" ]]; then
-    return 0
-  fi
-
-  security dump-keychain "$keychain" 2>/dev/null | perl -ne '
-    if (/\"svce\"<blob>=\"'"${KEYCHAIN_SERVICE}"'\"/) { $in = 1 }
-    elsif ($in && /\"acct\"<blob>=\"([^\"]+)\"/) {
-      print "$1\n" unless $1 eq "";
-      $in = 0;
-    }
-  ' | sort -u
 }
 
 get_password() {
@@ -132,15 +117,10 @@ unlock_pdf() {
 
 output_path_for() {
   local input="$1"
-  local base dir name
+  local dir name
 
   if [[ -n "${OUTPUT_DIR:-}" ]]; then
-    if [[ "${RECURSIVE:-0}" -eq 1 && -n "${ROOT_DIR:-}" ]]; then
-      local rel="${input#"${ROOT_DIR}"/}"
-      echo "${OUTPUT_DIR}/${rel}"
-    else
-      echo "${OUTPUT_DIR}/$(basename "$input")"
-    fi
+    echo "${OUTPUT_DIR}/$(basename "$input")"
     return
   fi
 
@@ -193,10 +173,48 @@ collect_pdfs() {
   fi
 }
 
+process_path() {
+  local target="$1"
+
+  if [[ -f "$target" ]]; then
+    case "$(basename "$target")" in
+      *.pdf|*.PDF) process_file "$target" || true ;;
+      *)
+        log_err "error: not a PDF file: ${target}"
+        FAILED=$((FAILED + 1))
+        ;;
+    esac
+    return
+  fi
+
+  if [[ ! -d "$target" ]]; then
+    log_err "error: not a file or directory: ${target}"
+    FAILED=$((FAILED + 1))
+    return
+  fi
+
+  local mode="this folder only"
+  [[ "$RECURSIVE" -eq 1 ]] && mode="recursive"
+  log "Scanning (${mode}): ${target}"
+
+  local pdfs file
+  pdfs="$(collect_pdfs "$target")"
+  if [[ -z "$pdfs" ]]; then
+    log "No PDF files found in ${target}."
+    return
+  fi
+
+  while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    process_file "$file" || true
+  done <<< "$pdfs"
+}
+
 main() {
   local RECURSIVE=0 IN_PLACE=0 DRY_RUN=0 QUIET=0
-  local OUTPUT_DIR="" ROOT_DIR=""
+  local OUTPUT_DIR=""
   local UNLOCKED=0 SKIPPED=0 FAILED=0
+  local TARGETS=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -207,46 +225,39 @@ main() {
       -q|--quiet)     QUIET=1; shift ;;
       -h|--help)      usage; exit 0 ;;
       -*)             log_err "error: unknown option: $1"; usage; exit 1 ;;
-      *)
-        if [[ -n "${ROOT_DIR}" ]]; then
-          log_err "error: only one folder allowed"
-          exit 1
-        fi
-        ROOT_DIR="$1"
-        shift
-        ;;
+      *)              TARGETS+=("$1"); shift ;;
     esac
   done
 
-  if [[ -z "${ROOT_DIR}" ]]; then
-    log_err "error: folder path required"
+  if [[ ${#TARGETS[@]} -eq 0 ]]; then
+    log_err "error: path required (folder or .pdf file)"
     usage
     exit 1
   fi
 
-  if [[ ! -d "${ROOT_DIR}" ]]; then
-    log_err "error: not a directory: ${ROOT_DIR}"
+  require_qpdf
+
+  local target resolved=()
+  for target in "${TARGETS[@]}"; do
+    if [[ -e "$target" ]]; then
+      if [[ -d "$target" ]]; then
+        resolved+=("$(cd "$target" && pwd)")
+      else
+        resolved+=("$(cd "$(dirname "$target")" && pwd)/$(basename "$target")")
+      fi
+    else
+      log_err "error: path not found: ${target}"
+      FAILED=$((FAILED + 1))
+    fi
+  done
+
+  if [[ ${#resolved[@]} -eq 0 ]]; then
     exit 1
   fi
 
-  ROOT_DIR="$(cd "${ROOT_DIR}" && pwd)"
-  require_qpdf
-
-  local mode="this folder only"
-  [[ "$RECURSIVE" -eq 1 ]] && mode="recursive"
-  log "Scanning (${mode}): ${ROOT_DIR}"
-
-  local pdfs file
-  pdfs="$(collect_pdfs "${ROOT_DIR}")"
-  if [[ -z "$pdfs" ]]; then
-    log "No PDF files found."
-    exit 0
-  fi
-
-  while IFS= read -r file; do
-    [[ -z "$file" ]] && continue
-    process_file "$file" || true
-  done <<< "$pdfs"
+  for target in "${resolved[@]}"; do
+    process_path "$target"
+  done
 
   log ""
   log "Done: ${UNLOCKED} unlocked, ${SKIPPED} skipped, ${FAILED} failed"
