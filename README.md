@@ -78,7 +78,37 @@ pdf-unlock --in-place ~/Documents/invoices
 pdf-unlock -n -r ~/Documents/invoices
 ```
 
+### Enable the Quick Action (macOS 26 Tahoe)
+
+Apple moved this setting. Try these in order:
+
+1. **System Settings → General → Login Items & Extensions**
+   - Scroll to **Extensions**
+   - Click the **ⓘ** (info) button next to **Finder**
+   - Turn on **Unlock PDFs**
+
+2. **System Settings → Privacy & Security**
+   - Scroll to the bottom → **Extensions** (under *Others*)
+   - Click **Finder**
+   - Turn on **Unlock PDFs**
+
+3. Use **search** at the top of System Settings and type `Extensions` or `Unlock PDFs`.
+
+If **Unlock PDFs** does not appear in the list:
+
+```bash
+open ~/Library/Services/Unlock\ PDFs.workflow
+```
+
+In Automator: **File → Save** (no changes needed). Then check the Finder extensions list again and restart Finder:
+
+```bash
+killall Finder
+```
+
 **Finder:** Select a folder → right-click → **Quick Actions** → **Unlock PDFs** → choose *This folder only* or *Include subfolders*.
+
+If it is not under Quick Actions, try **Services** → **Unlock PDFs** (same action, older menu name).
 
 ## Where passwords are stored
 

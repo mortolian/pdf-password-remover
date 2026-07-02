@@ -54,7 +54,15 @@ install_quick_action() {
   rm -rf "$dest"
   cp -R "$src" "$dest"
   log "Installed Finder Quick Action: ${dest}"
-  log "Enable it in System Settings → Privacy & Security → Extensions → Finder"
+  log "Registering with Finder..."
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$dest" 2>/dev/null || true
+  log ""
+  log "Enable the action (macOS 26 Tahoe):"
+  log "  System Settings → General → Login Items & Extensions"
+  log "  → Extensions → click ⓘ next to Finder → turn on 'Unlock PDFs'"
+  log ""
+  log "If it is not listed, open the workflow once in Automator and save:"
+  log "  open \"${dest}\""
 }
 
 main() {
@@ -71,7 +79,9 @@ main() {
   echo "  1. Add your PDF password(s):  pdf-password add"
   echo "  2. Test Keychain access:      pdf-password test"
   echo "  3. Unlock a folder:           pdf-unlock ~/path/to/folder"
-  echo "  4. In Finder: right-click a folder → Quick Actions → Unlock PDFs"
+  echo "  4. Enable Quick Action: System Settings → General → Login Items & Extensions"
+  echo "     → Extensions → ⓘ Finder → turn on Unlock PDFs"
+  echo "  5. In Finder: right-click a folder → Quick Actions → Unlock PDFs"
   echo ""
   echo "Passwords are stored in macOS Keychain only — never in this repo."
 }
