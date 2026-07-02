@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Secrets — never commit passwords or key material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*
+secrets*
+
+# Test artifacts
+*.bak
+*-unlocked.pdf
+test-output/
+tmp/
+*.tmp
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*~
+
+# Logs
+*.log

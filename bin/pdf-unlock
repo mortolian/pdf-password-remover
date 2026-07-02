@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# Batch-remove password protection from PDF files using qpdf.
+# Passwords are read from the macOS Keychain (never from files or env vars).
+
+set -euo pipefail
+
+readonly KEYCHAIN_SERVICE="pdf-password-remover"
+readonly SCRIPT_NAME="$(basename "$0")"
+
+usage() {
+  cat <<EOF
+Usage: ${SCRIPT_NAME} [options] <folder>
+
+Remove password protection from PDF files in a folder.
+
+Options:
+  -r, --recursive     Process subfolders recursively
+  -i, --in-place      Replace original files (creates .bak backup first)
+  -o, --output DIR    Write unlocked PDFs to DIR (default: same folder as source)
+  -n, --dry-run       Show what would be processed without changing files
+  -q, --quiet         Only print errors and summary
+  -h, --help          Show this help
+
+Passwords are loaded from the macOS Keychain (service: ${KEYCHAIN_SERVICE}).
+Add passwords with: pdf-password add
+
+Examples:
+  ${SCRIPT_NAME} ~/Documents/invoices
+  ${SCRIPT_NAME} -r ~/Documents/invoices
+  ${SCRIPT_NAME} --in-place ~/Downloads
+EOF
+}
+
+log() {
+  [[ "${QUIET:-0}" -eq 1 ]] && return 0
+  echo "$@"
+}
+
+log_err() {
+  echo "$@" >&2
+}
+
+require_qpdf() {
+  if ! command -v qpdf >/dev/null 2>&1; then
+    log_err "error: qpdf is not installed. Run: brew install qpdf"
+    log_err "       Or re-run the project install script: ./install.sh"
+    exit 1
+  fi
+}
+
+keychain_accounts() {
+  local keychain="${HOME}/Library/Keychains/login.keychain-db"
+  if [[ ! -f "$keychain" ]]; then
+    keychain="${HOME}/Library/Keychains/login.keychain"
+  fi
+  if [[ ! -f "$keychain" ]]; then
+    return 0
+  fi
+
+  security dump-keychain "$keychain" 2>/dev/null | perl -ne '
+    if (/\"svce\"<blob>=\"'"${KEYCHAIN_SERVICE}"'\"/) { $in = 1 }
+    elsif ($in && /\"acct\"<blob>=\"([^\"]+)\"/) {
+      print "$1\n" unless $1 eq "";
+      $in = 0;
+    }
+  ' | sort -u
+}
+
+get_password() {
+  local account="$1"
+  security find-generic-password -a "$account" -s "$KEYCHAIN_SERVICE" -w 2>/dev/null
+}
+
+pdf_is_encrypted() {
+  local file="$1"
+  qpdf --requires-password "$file" >/dev/null 2>&1
+}
+
+try_decrypt() {
+  local input="$1"
+  local output="$2"
+  local password="$3"
+
+  qpdf --password="$password" --decrypt "$input" "$output" 2>/dev/null
+}
+
+unlock_pdf() {
+  local input="$1"
+  local output="$2"
+  local accounts password
+
+  accounts="$(keychain_accounts || true)"
+  if [[ -z "$accounts" ]]; then
+    log_err "error: no passwords in Keychain. Run: pdf-password add"
+    return 1
+  fi
+
+  if ! pdf_is_encrypted "$input"; then
+    log "  skip (not encrypted): $(basename "$input")"
+    SKIPPED=$((SKIPPED + 1))
+    return 0
+  fi
+
+  while IFS= read -r account; do
+    [[ -z "$account" ]] && continue
+    password="$(get_password "$account" || true)"
+    [[ -z "$password" ]] && continue
+
+    local tmp
+    tmp="$(mktemp "${TMPDIR:-/tmp}/pdf-unlock.XXXXXX.pdf")"
+    if try_decrypt "$input" "$tmp" "$password"; then
+      if [[ "$DRY_RUN" -eq 1 ]]; then
+        rm -f "$tmp"
+        log "  would unlock: $(basename "$input") (password: ${account})"
+        UNLOCKED=$((UNLOCKED + 1))
+        return 0
+      fi
+
+      mkdir -p "$(dirname "$output")"
+      mv "$tmp" "$output"
+      log "  unlocked: $(basename "$input") (password: ${account})"
+      UNLOCKED=$((UNLOCKED + 1))
+      return 0
+    fi
+    rm -f "$tmp"
+  done <<< "$accounts"
+
+  log_err "  failed: $(basename "$input") (no matching password)"
+  FAILED=$((FAILED + 1))
+  return 1
+}
+
+output_path_for() {
+  local input="$1"
+  local base dir name
+
+  if [[ -n "${OUTPUT_DIR:-}" ]]; then
+    if [[ "${RECURSIVE:-0}" -eq 1 && -n "${ROOT_DIR:-}" ]]; then
+      local rel="${input#"${ROOT_DIR}"/}"
+      echo "${OUTPUT_DIR}/${rel}"
+    else
+      echo "${OUTPUT_DIR}/$(basename "$input")"
+    fi
+    return
+  fi
+
+  if [[ "${IN_PLACE:-0}" -eq 1 ]]; then
+    echo "$input"
+    return
+  fi
+
+  dir="$(dirname "$input")"
+  name="$(basename "$input" .pdf)"
+  echo "${dir}/${name}-unlocked.pdf"
+}
+
+process_file() {
+  local input="$1"
+  local output
+
+  [[ "$(basename "$input")" == *-unlocked.pdf ]] && return 0
+  [[ "${input}" == *.bak ]] && return 0
+
+  output="$(output_path_for "$input")"
+
+  if [[ "$output" == "$input" ]]; then
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      unlock_pdf "$input" "$(mktemp "${TMPDIR:-/tmp}/pdf-unlock.XXXXXX.pdf")"
+    else
+      local backup="${input}.bak"
+      if [[ ! -f "$backup" ]]; then
+        cp -p "$input" "$backup"
+      fi
+      local tmp
+      tmp="$(mktemp "${TMPDIR:-/tmp}/pdf-unlock.XXXXXX.pdf")"
+      if unlock_pdf "$input" "$tmp"; then
+        mv "$tmp" "$input"
+      else
+        rm -f "$tmp"
+      fi
+    fi
+  else
+    unlock_pdf "$input" "$output"
+  fi
+}
+
+collect_pdfs() {
+  local dir="$1"
+  if [[ "${RECURSIVE:-0}" -eq 1 ]]; then
+    find "$dir" -type f -iname '*.pdf' | sort
+  else
+    find "$dir" -maxdepth 1 -type f -iname '*.pdf' | sort
+  fi
+}
+
+main() {
+  local RECURSIVE=0 IN_PLACE=0 DRY_RUN=0 QUIET=0
+  local OUTPUT_DIR="" ROOT_DIR=""
+  local UNLOCKED=0 SKIPPED=0 FAILED=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -r|--recursive) RECURSIVE=1; shift ;;
+      -i|--in-place)  IN_PLACE=1; shift ;;
+      -o|--output)    OUTPUT_DIR="$2"; shift 2 ;;
+      -n|--dry-run)   DRY_RUN=1; shift ;;
+      -q|--quiet)     QUIET=1; shift ;;
+      -h|--help)      usage; exit 0 ;;
+      -*)             log_err "error: unknown option: $1"; usage; exit 1 ;;
+      *)
+        if [[ -n "${ROOT_DIR}" ]]; then
+          log_err "error: only one folder allowed"
+          exit 1
+        fi
+        ROOT_DIR="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "${ROOT_DIR}" ]]; then
+    log_err "error: folder path required"
+    usage
+    exit 1
+  fi
+
+  if [[ ! -d "${ROOT_DIR}" ]]; then
+    log_err "error: not a directory: ${ROOT_DIR}"
+    exit 1
+  fi
+
+  ROOT_DIR="$(cd "${ROOT_DIR}" && pwd)"
+  require_qpdf
+
+  local mode="this folder only"
+  [[ "$RECURSIVE" -eq 1 ]] && mode="recursive"
+  log "Scanning (${mode}): ${ROOT_DIR}"
+
+  local pdfs file
+  pdfs="$(collect_pdfs "${ROOT_DIR}")"
+  if [[ -z "$pdfs" ]]; then
+    log "No PDF files found."
+    exit 0
+  fi
+
+  while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    process_file "$file" || true
+  done <<< "$pdfs"
+
+  log ""
+  log "Done: ${UNLOCKED} unlocked, ${SKIPPED} skipped, ${FAILED} failed"
+  [[ "$FAILED" -gt 0 ]] && exit 1
+  exit 0
+}
+
+main "$@"
