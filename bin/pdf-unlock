@@ -65,8 +65,12 @@ try_decrypt() {
   local input="$1"
   local output="$2"
   local password="$3"
+  local rc
 
   qpdf --password="$password" --decrypt "$input" "$output" 2>/dev/null
+  rc=$?
+  # qpdf exit 3 = success with warnings (common for PDFs from some scanners/banks)
+  [[ $rc -eq 0 || $rc -eq 3 ]]
 }
 
 unlock_pdf() {
