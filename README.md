@@ -1,6 +1,10 @@
+<p align="center">
+  <img src="assets/banner.png" alt="PDF Password Remover — remove passwords from PDF files on macOS" width="900">
+</p>
+
 # PDF Password Remover
 
-Batch-remove password protection from PDF files on macOS. Includes a **Finder Quick Action** (right-click menu) and a command-line tool for automation.
+Batch-remove password protection from PDF files on macOS. Includes a **Finder service** (right-click menu) and a command-line tool for automation.
 
 Passwords are stored in the **macOS Keychain** — encrypted by the system, never written to disk or committed to git.
 
@@ -162,6 +166,8 @@ pdf-password remove default
 
 ```
 pdf-password-remover/
+├── assets/
+│   └── banner.png           # README banner image
 ├── bin/
 │   ├── pdf-unlock           # Main batch unlock CLI
 │   ├── pdf-password         # Keychain password management
